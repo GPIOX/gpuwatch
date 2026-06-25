@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NVML GPU probe — runs on remote server via SSH stdin, outputs JSON to stdout.
+NVML GPU probe -- runs on remote server via SSH stdin, outputs JSON to stdout.
 
 Zero dependencies: uses only Python stdlib ctypes + libnvidia-ml.so (part of
 NVIDIA driver). No pip install required on the remote side.
@@ -209,7 +209,7 @@ def _run_nvsmi_processes() -> dict[str, list[dict[str, Any]]]:
     current user cannot read other users' process details. nvidia-smi
     handles this via driver-level access, so we use it as a fallback.
 
-    Returns: dict mapping GPU UUID → list of {pid, name, used_memory_mb}
+    Returns: dict mapping GPU UUID -> list of {pid, name, used_memory_mb}
     """
     import subprocess
 
@@ -310,7 +310,7 @@ def _gpu_processes(
                 }
             )
 
-    # ── Classify: own vs other ──
+    # -- Classify: own vs other --
     own_procs: list[dict[str, Any]] = []
     other_map: dict[str, dict[str, int]] = {}
 
@@ -384,7 +384,7 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
     if lib_path is None:
         return {
             "ok": False,
-            "error": "Cannot find libnvidia-ml.so — NVIDIA driver not installed?",
+            "error": "Cannot find libnvidia-ml.so -- NVIDIA driver not installed?",
             "elapsed_ms": (time.monotonic() - t_start) * 1000,
         }
 
