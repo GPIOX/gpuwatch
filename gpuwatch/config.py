@@ -32,9 +32,9 @@ def parse_ssh_config(path: str | None = None) -> list[dict[str, str]]:
         path = os.path.expanduser("~/.ssh/config")
 
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-    except FileNotFoundError:
+    except (FileNotFoundError, UnicodeDecodeError):
         logger.warning("SSH config not found: %s", path)
         return []
     except OSError as e:
@@ -93,9 +93,9 @@ def load_yaml_config(path: str | None = None) -> dict[str, Any] | None:
     try:
         import yaml
 
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
-    except FileNotFoundError:
+    except (FileNotFoundError, UnicodeDecodeError):
         return None
     except ImportError:
         logger.debug("pyyaml not installed, skipping YAML config")
