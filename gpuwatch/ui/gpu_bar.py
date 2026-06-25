@@ -61,9 +61,7 @@ def memory_bar(used_mb: int, total_mb: int, width: int = 16) -> Text:
     used_str = _format_mem(used_mb)
     total_str = _format_mem(total_mb)
     result = Text(bar_str, style=style)
-    result.append(
-        f" {used_str} / {total_str}", style=Style(color="bright_black")
-    )
+    result.append(f" {used_str} / {total_str}", style=style)
     return result
 
 
