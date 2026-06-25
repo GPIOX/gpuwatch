@@ -15,31 +15,6 @@ from .models import ServerConfig
 
 logger = logging.getLogger(__name__)
 
-# Keyword-based filtering: only show hosts that look like GPU servers
-_GPU_KEYWORDS = {
-    "4090",
-    "3090",
-    "4080",
-    "3080",
-    "a100",
-    "a6000",
-    "a5000",
-    "a40",
-    "h100",
-    "h800",
-    "v100",
-    "t4",
-    "gpu",
-    "dgx",
-}
-
-
-def _looks_like_gpu(host: str) -> bool:
-    """Heuristic: does the host alias contain a known GPU keyword?"""
-    lower = host.lower()
-    return any(kw in lower for kw in _GPU_KEYWORDS)
-
-
 def parse_ssh_config(path: str | None = None) -> list[dict[str, str]]:
     """Parse ~/.ssh/config and return a list of Host entries.
 
@@ -154,16 +129,9 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
             )
         return result
 
-    # Auto-discovery: find GPU-sounding hosts in SSH config
-    gpu_hosts = [h for h in ssh_hosts if _looks_like_gpu(h["host"])]
-
-    if not gpu_hosts:
-        logger.warning(
-            "No GPU servers found in SSH config. "
-            "Create ~/.config/gpuwatch/servers.yml to configure manually."
-        )
-        return []
-
+    # Show all non-wildcard hosts from SSH config.
+    # User toggles which ones to monitor in the TUI.
+    # Non-GPU servers will show an error state gracefully.
     return [
         ServerConfig(
             host=h["host"],
@@ -171,5 +139,5 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
             enabled=False,
             ssh_user=h.get("user"),
         )
-        for h in gpu_hosts
+        for h in ssh_hosts
     ]
