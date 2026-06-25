@@ -18,7 +18,7 @@ from textual.widgets import Static
 from ..models import ServerSnapshot
 import os
 
-from .gpu_bar import _format_mem, memory_bar, temp_str, utilization_bar
+from .gpu_bar import _format_mem, memory_bar, power_str, temp_str, utilization_bar
 
 
 def _truncate_cmd(cmd: str, max_len: int = 70) -> str:
@@ -145,10 +145,7 @@ class ServerPanel(Static):
                 gpu.memory_used_mb, gpu.memory_total_mb, width=18
             )
             temp_text = temp_str(gpu.temperature_c)
-            power_text = Text(
-                f"{gpu.power_watts:.0f}/{gpu.power_limit_watts:.0f}W",
-                style="bright_black",
-            )
+            power_text = power_str(gpu.power_watts, gpu.power_limit_watts)
 
             gpu_row = Text()
             gpu_row.append(f"GPU {gpu.index}  ", style="bold cyan")
@@ -225,10 +222,7 @@ class ServerPanel(Static):
                 gpu.memory_used_mb, gpu.memory_total_mb, width=20
             )
             temp_text = temp_str(gpu.temperature_c)
-            power_text = Text(
-                f"{gpu.power_watts:.0f}/{gpu.power_limit_watts:.0f}W",
-                style="bright_black",
-            )
+            power_text = power_str(gpu.power_watts, gpu.power_limit_watts)
 
             # Build process summary
             proc_parts: list[str] = []

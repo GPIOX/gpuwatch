@@ -80,3 +80,19 @@ def temp_str(celsius: int) -> Text:
     else:
         style = Style(color="red")
     return Text(f"{celsius}°C", style=style)
+
+
+def power_str(watts: float, limit_watts: float) -> Text:
+    """Render power draw with color relative to limit:
+    green < 50%, yellow < 80%, red >= 80%.
+    """
+    if limit_watts <= 0:
+        return Text(f"{watts:.0f}W", style=Style(color="bright_black"))
+    ratio = (watts / limit_watts) * 100
+    if ratio < 50:
+        style = Style(color="green")
+    elif ratio < 80:
+        style = Style(color="yellow")
+    else:
+        style = Style(color="red")
+    return Text(f"{watts:.0f}W", style=style)
