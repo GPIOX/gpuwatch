@@ -142,6 +142,9 @@ class GPUWatchApp(App):
         if not hasattr(self, "_refresh_lock"):
             self._refresh_lock = asyncio.Lock()
 
+        # Remember current focus so we can restore it after refresh
+        focused = self.screen.focused
+
         async def _restart():
             if self._collector is None:
                 return
@@ -150,6 +153,12 @@ class GPUWatchApp(App):
                     if server.enabled:
                         await self._collector.stop(server.host)
                         await self._collector.start(server.host)
+            # Restore focus after refresh completes
+            if focused is not None:
+                try:
+                    focused.focus()
+                except Exception:
+                    pass
 
         asyncio.create_task(_restart())
 

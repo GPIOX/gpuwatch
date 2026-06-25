@@ -10,8 +10,12 @@ from ..models import ServerSnapshot
 from .server_panel import ServerPanel
 
 
-class Dashboard(VerticalScroll):
-    """Scrollable container holding all active server panels."""
+class Dashboard(VerticalScroll, can_focus=False):
+    """Scrollable container holding all active server panels.
+
+    Not focusable — focus stays on the ServerSelector sidebar.
+    Scrolling works via mouse wheel / touchpad.
+    """
 
     DEFAULT_CSS = """
     Dashboard {
