@@ -165,6 +165,7 @@ class ServerPanel(Static):
 
             # ── Own processes (highlighted with full cmdline) ──
             if gpu.processes:
+                gpu_table.add_row(Text(""))  # spacer
                 proc_label = Text(
                     "  PID      GPU Mem   Command", style="bold underline"
                 )
@@ -185,6 +186,7 @@ class ServerPanel(Static):
 
             # ── Other users (aggregated, dimmed) ──
             if gpu.other_users:
+                gpu_table.add_row(Text(""))  # spacer
                 if gpu.processes:
                     gpu_table.add_row(Text("  ─────────────────────────────────────────────", style="dim"))
                 for ou in gpu.other_users:
