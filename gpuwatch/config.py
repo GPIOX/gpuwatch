@@ -139,7 +139,8 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
     # Show all non-wildcard hosts, skipping known code-hosting domains.
     servers = [
         h for h in ssh_hosts
-        if h.get("hostname", "").lower() not in _SKIP_HOSTNAMES
+        if h["host"].lower() not in _SKIP_HOSTNAMES
+        and h.get("hostname", "").lower() not in _SKIP_HOSTNAMES
     ]
     return [
         ServerConfig(
