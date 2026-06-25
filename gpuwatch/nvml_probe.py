@@ -31,6 +31,7 @@ NVML_TEMPERATURE_GPU = 0
 NVML_SUCCESS = 0
 NVML_ERROR_NOT_INITIALIZED = 3
 NVML_ERROR_INSUFFICIENT_SIZE = 4
+NVML_ERROR_NO_PERMISSION = 7
 
 NVML_DEVICE_NAME_BUFFER_SIZE = 96
 NVML_DEVICE_UUID_BUFFER_SIZE = 96
@@ -201,6 +202,150 @@ def _uid_to_name(uid: int) -> str | None:
         return str(uid)
 
 
+def _run_nvsmi_processes() -> dict[str, list[dict[str, Any]]]:
+    """Fallback: run nvidia-smi to get GPU process info.
+
+    NVML process queries may return NVML_ERROR_NO_PERMISSION when the
+    current user cannot read other users' process details. nvidia-smi
+    handles this via driver-level access, so we use it as a fallback.
+
+    Returns: dict mapping GPU UUID → list of {pid, name, used_memory_mb}
+    """
+    import subprocess
+
+    try:
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=gpu_uuid,pid,process_name,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for line in output.decode("utf-8", errors="replace").strip().split("\n"):
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",", 3)]
+        if len(parts) < 4:
+            continue
+        gpu_uuid, pid_str, proc_name, mem_str = parts
+        try:
+            pid = int(pid_str)
+            mem_mb = int(mem_str)
+        except ValueError:
+            continue
+        if gpu_uuid not in result:
+            result[gpu_uuid] = []
+        result[gpu_uuid].append(
+            {"pid": pid, "name": proc_name, "used_memory_mb": mem_mb}
+        )
+    return result
+
+
+def _gpu_processes(
+    lib,
+    handle,
+    gpu_uuid: str,
+    own_user: str | None,
+    nvsmi_data: dict[str, list[dict[str, Any]]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Collect processes for one GPU.
+
+    Tries NVML first. Falls back to pre-fetched nvidia-smi data if
+    NVML returns NVML_ERROR_NO_PERMISSION.
+    """
+    raw_procs: list[dict[str, Any]] = []
+    use_nvsmi = False
+
+    # Try NVML
+    try:
+        proc_count = ctypes.c_uint(0)
+        rc = lib.nvmlDeviceGetComputeRunningProcesses(
+            handle, ctypes.byref(proc_count), None
+        )
+        if rc == NVML_ERROR_NO_PERMISSION:
+            use_nvsmi = True
+        elif rc in (NVML_SUCCESS, NVML_ERROR_INSUFFICIENT_SIZE) and proc_count.value > 0:
+            buf = (NvmlProcessInfo * proc_count.value)()
+            rc2 = lib.nvmlDeviceGetComputeRunningProcesses(
+                handle, ctypes.byref(proc_count), buf
+            )
+            if rc2 == NVML_SUCCESS:
+                for j in range(proc_count.value):
+                    pi = buf[j]
+                    name = _read_proc_comm(pi.pid)
+                    uid = _read_proc_uid(pi.pid)
+                    username = _uid_to_name(uid) if uid is not None else None
+                    gpu_mem = pi.usedGpuMemory
+                    if gpu_mem >= (1 << 63):
+                        gpu_mem = 0
+                    raw_procs.append(
+                        {
+                            "pid": pi.pid,
+                            "gpu_memory_mb": int(gpu_mem // (1024 * 1024)),
+                            "name": name or "?",
+                            "user": username,
+                        }
+                    )
+    except Exception:
+        pass
+
+    # Fallback to nvidia-smi data
+    if use_nvsmi and nvsmi_data:
+        for pi in nvsmi_data.get(gpu_uuid, []):
+            # Resolve user from /proc for own/other classification
+            uid = _read_proc_uid(pi["pid"])
+            username = _uid_to_name(uid) if uid is not None else None
+            raw_procs.append(
+                {
+                    "pid": pi["pid"],
+                    "gpu_memory_mb": pi["used_memory_mb"],
+                    "name": pi["name"],
+                    "user": username,
+                }
+            )
+
+    # ── Classify: own vs other ──
+    own_procs: list[dict[str, Any]] = []
+    other_map: dict[str, dict[str, int]] = {}
+
+    for rp in raw_procs:
+        user = rp.get("user")
+        if own_user and user == own_user:
+            if not use_nvsmi:
+                # NVML path: we already have user info, add cmdline
+                cmdline = _read_proc_cmdline(rp["pid"])
+            else:
+                # nvidia-smi path: cmdline from /proc
+                cmdline = _read_proc_cmdline(rp["pid"])
+            own_procs.append(
+                {
+                    "pid": rp["pid"],
+                    "gpu_memory_mb": rp["gpu_memory_mb"],
+                    "name": rp["name"],
+                    "user": user,
+                    "cmdline": cmdline,
+                }
+            )
+        else:
+            key = user or "?"
+            if key not in other_map:
+                other_map[key] = {"count": 0, "mem": 0}
+            other_map[key]["count"] += 1
+            other_map[key]["mem"] += rp["gpu_memory_mb"]
+
+    other_list = [
+        {"user": u, "process_count": d["count"], "total_memory_mb": d["mem"]}
+        for u, d in sorted(other_map.items())
+    ]
+    return own_procs, other_list
+
+
 # ---------------------------------------------------------------------------
 # Main probe logic
 # ---------------------------------------------------------------------------
@@ -267,6 +412,19 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
 
         gpus: list[dict[str, Any]] = []
         handle = ctypes.c_void_p()
+
+        # Pre-check: does NVML allow process queries? If not, pre-fetch
+        # nvidia-smi process data once for all GPUs.
+        nvsmi_data: dict[str, list[dict[str, Any]]] | None = None
+        if count.value > 0:
+            proc_count = ctypes.c_uint(0)
+            test_handle = ctypes.c_void_p()
+            rc0 = lib.nvmlDeviceGetHandleByIndex(0, ctypes.byref(test_handle))
+            rc1 = lib.nvmlDeviceGetComputeRunningProcesses(
+                test_handle, ctypes.byref(proc_count), None
+            )
+            if rc1 == NVML_ERROR_NO_PERMISSION:
+                nvsmi_data = _run_nvsmi_processes()
 
         for i in range(count.value):
             gpu: dict[str, Any] = {"index": i}
@@ -345,56 +503,14 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
                 gpu["power_limit_watts"] = 0.0
 
             # Compute processes: own user in detail, others aggregated
-            processes: list[dict[str, Any]] = []
-            other_users: dict[str, dict[str, int]] = {}  # user → {count, mem}
-            try:
-                proc_count = ctypes.c_uint(0)
-                rc = lib.nvmlDeviceGetComputeRunningProcesses(
-                    handle, ctypes.byref(proc_count), None
-                )
-                if rc in (NVML_SUCCESS, NVML_ERROR_INSUFFICIENT_SIZE) and proc_count.value > 0:
-                    buf = (NvmlProcessInfo * proc_count.value)()
-                    rc2 = lib.nvmlDeviceGetComputeRunningProcesses(
-                        handle, ctypes.byref(proc_count), buf
-                    )
-                    if rc2 == NVML_SUCCESS:
-                        for j in range(proc_count.value):
-                            pi = buf[j]
-                            name = _read_proc_comm(pi.pid)
-                            uid = _read_proc_uid(pi.pid)
-                            username = _uid_to_name(uid) if uid is not None else None
-                            gpu_mem = pi.usedGpuMemory
-                            if gpu_mem >= (1 << 63):
-                                gpu_mem = 0
-                            mem_mb = int(gpu_mem // (1024 * 1024))
-
-                            if own_user and username == own_user:
-                                # Own process: full detail + cmdline
-                                cmdline = _read_proc_cmdline(pi.pid)
-                                processes.append(
-                                    {
-                                        "pid": pi.pid,
-                                        "gpu_memory_mb": mem_mb,
-                                        "name": name or "?",
-                                        "user": username,
-                                        "cmdline": cmdline,
-                                    }
-                                )
-                            else:
-                                # Other user: aggregate
-                                key = username or "?"
-                                if key not in other_users:
-                                    other_users[key] = {"count": 0, "mem": 0}
-                                other_users[key]["count"] += 1
-                                other_users[key]["mem"] += mem_mb
-            except Exception:
-                pass
-
+            processes, other_users = _gpu_processes(
+                lib, handle,
+                gpu_uuid=gpu.get("uuid", ""),
+                own_user=own_user,
+                nvsmi_data=nvsmi_data,
+            )
             gpu["processes"] = processes
-            gpu["other_users"] = [
-                {"user": u, "process_count": d["count"], "total_memory_mb": d["mem"]}
-                for u, d in sorted(other_users.items())
-            ]
+            gpu["other_users"] = other_users
             gpus.append(gpu)
 
         elapsed = (time.monotonic() - t_start) * 1000
