@@ -14,12 +14,13 @@ from typing import Any, Literal
 
 @dataclass
 class GPUProcess:
-    """A process running on a specific GPU."""
+    """A process running on a specific GPU (only shown for the owning user)."""
 
     pid: int
     name: str
     gpu_memory_mb: int
     user: str | None = None
+    cmdline: str | None = None  # full command line (own processes only)
 
     @classmethod
     def from_probe(cls, data: dict[str, Any]) -> GPUProcess:
@@ -28,6 +29,24 @@ class GPUProcess:
             name=data.get("name", "?"),
             gpu_memory_mb=data["gpu_memory_mb"],
             user=data.get("user"),
+            cmdline=data.get("cmdline"),
+        )
+
+
+@dataclass
+class OtherUserMemory:
+    """Aggregated memory usage by another user on a GPU."""
+
+    user: str
+    process_count: int
+    total_memory_mb: int
+
+    @classmethod
+    def from_probe(cls, data: dict[str, Any]) -> OtherUserMemory:
+        return cls(
+            user=data["user"],
+            process_count=data["process_count"],
+            total_memory_mb=data["total_memory_mb"],
         )
 
 
@@ -47,6 +66,7 @@ class GPUInfo:
     power_watts: float
     power_limit_watts: float
     processes: list[GPUProcess] = field(default_factory=list)
+    other_users: list[OtherUserMemory] = field(default_factory=list)
 
     @property
     def memory_percent(self) -> float:
@@ -59,6 +79,9 @@ class GPUInfo:
     def from_probe(cls, data: dict[str, Any]) -> GPUInfo:
         processes = [
             GPUProcess.from_probe(p) for p in data.get("processes", [])
+        ]
+        other_users = [
+            OtherUserMemory.from_probe(o) for o in data.get("other_users", [])
         ]
         return cls(
             index=data["index"],
@@ -73,6 +96,7 @@ class GPUInfo:
             power_watts=data.get("power_watts", 0.0),
             power_limit_watts=data.get("power_limit_watts", 0.0),
             processes=processes,
+            other_users=other_users,
         )
 
 
@@ -140,3 +164,4 @@ class ServerConfig:
     host: str  # SSH alias
     label: str  # display name
     enabled: bool = False  # whether polling is active
+    ssh_user: str | None = None  # SSH login user (for process highlighting)

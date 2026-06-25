@@ -41,13 +41,14 @@ class RemotePythonNotFound(SSHCommandError):
 
 
 async def run_probe(
-    host_alias: str, timeout: float = 5.0
+    host_alias: str, timeout: float = 5.0, own_user: str | None = None
 ) -> tuple[str, float]:
     """Execute the NVML probe on a remote server via SSH.
 
     Args:
         host_alias: SSH host alias (from ~/.ssh/config).
         timeout: Maximum time to wait for the SSH command (seconds).
+        own_user: If set, passed to probe as --own-user for highlighting.
 
     Returns:
         (stdout_string, latency_ms) on success.
@@ -67,6 +68,11 @@ async def run_probe(
     _ctrl_dir = _os.path.expanduser("~/.ssh/controlmasters")
     _os.makedirs(_ctrl_dir, mode=0o700, exist_ok=True)
 
+    # Build remote command: python3 - [--own-user <user>]
+    remote_cmd = ["python3", "-"]
+    if own_user:
+        remote_cmd.extend(["--own-user", own_user])
+
     proc = await asyncio.create_subprocess_exec(
         "ssh",
         "-T",  # disable pseudo-terminal allocation
@@ -78,8 +84,7 @@ async def run_probe(
         "-o", f"ControlPath={_ctrl_dir}/%C",
         "--",  # prevent alias starting with '-' being parsed as option
         host_alias,
-        "python3",
-        "-",
+        *remote_cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

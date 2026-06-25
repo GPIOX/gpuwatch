@@ -16,7 +16,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from ..models import ServerSnapshot
-from .gpu_bar import memory_bar, temp_str, utilization_bar
+from .gpu_bar import _format_mem, memory_bar, temp_str, utilization_bar
 
 
 class ServerPanel(Static):
@@ -121,7 +121,7 @@ class ServerPanel(Static):
         return gpu_table
 
     def _build_full(self, snap: ServerSnapshot) -> Table:
-        """Full layout: one row per GPU + process details."""
+        """Full layout: one row per GPU + own processes + aggregated other users."""
         gpu_table = Table(
             show_header=False, expand=True, box=None, padding=(0, 1)
         )
@@ -150,21 +150,42 @@ class ServerPanel(Static):
             gpu_row.append(power_text)
             gpu_table.add_row(gpu_row)
 
+            # ── Own processes (highlighted with full cmdline) ──
             if gpu.processes:
-                proc_label = Text("      PID   Mem       Process", style="dim")
+                proc_label = Text(
+                    "  PID      GPU Mem   Command", style="bold underline"
+                )
                 gpu_table.add_row(proc_label)
                 for proc in gpu.processes:
-                    user_tag = f"({proc.user})" if proc.user else ""
+                    mem_str = _format_mem(proc.gpu_memory_mb)
+                    cmd = proc.cmdline or proc.name
+
                     proc_text = Text()
                     proc_text.append(
-                        f"      {proc.pid:<5} ", style="bright_black"
+                        f"  {proc.pid:<7} ", style="cyan"
                     )
                     proc_text.append(
-                        f"{proc.gpu_memory_mb:>5}MB  ", style="yellow"
+                        f"{mem_str:>9} ", style="yellow"
                     )
-                    proc_text.append(f"{proc.name} ", style="green")
-                    proc_text.append(user_tag, style="bright_black")
+                    proc_text.append(f"  {cmd}", style="green")
                     gpu_table.add_row(proc_text)
+
+            # ── Other users (aggregated, dimmed) ──
+            if gpu.other_users:
+                if gpu.processes:
+                    # Separator between own and others
+                    gpu_table.add_row(Text("  ─" * 30, style="dim"))
+                for ou in gpu.other_users:
+                    mem_str = _format_mem(ou.total_memory_mb)
+                    other_text = Text()
+                    other_text.append(
+                        f"  {ou.user:<15} ", style="bright_black"
+                    )
+                    other_text.append(
+                        f"{ou.process_count} proc, {mem_str}",
+                        style="dim",
+                    )
+                    gpu_table.add_row(other_text)
 
             if gpu.index < len(snap.gpus) - 1:
                 gpu_table.add_row(Text("", style="dim"))
@@ -172,15 +193,14 @@ class ServerPanel(Static):
         return gpu_table
 
     def _build_compact(self, snap: ServerSnapshot) -> Table:
-        """Compact layout: one line per GPU, process name inline."""
+        """Compact layout: one line per GPU, own process + other user summary inline."""
         gpu_table = Table(
             show_header=False, expand=True, box=None, padding=(0, 1)
         )
 
-        # Header
         header = Text()
         header.append(
-            f"{'GPU':<5} {'Name':<22} {'Util':>5}  {'Memory':<24} {'Temp':>4}  {'Power':>10}  Proc",
+            f"{'GPU':<5} {'Name':<22} {'Util':>5}  {'Memory':<24} {'Temp':>4}  {'Power':>10}  Processes",
             style="bold underline",
         )
         gpu_table.add_row(header)
@@ -196,14 +216,17 @@ class ServerPanel(Static):
                 style="bright_black",
             )
 
-            # Top process name (or "-")
-            if gpu.processes:
-                top_proc = gpu.processes[0]
-                proc_str = f"{top_proc.name}"
-                if top_proc.user:
-                    proc_str += f"({top_proc.user})"
-            else:
-                proc_str = "-"
+            # Build process summary
+            proc_parts: list[str] = []
+            for proc in gpu.processes:
+                proc_parts.append(f"{proc.name}")
+            if gpu.other_users:
+                other_total = sum(ou.total_memory_mb for ou in gpu.other_users)
+                other_count = sum(ou.process_count for ou in gpu.other_users)
+                proc_parts.append(
+                    f"+{other_count} other ({_format_mem(other_total)})"
+                )
+            proc_str = ", ".join(proc_parts) if proc_parts else "-"
 
             row = Text()
             row.append(f"GPU{gpu.index:<2} ", style="bold cyan")

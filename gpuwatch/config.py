@@ -142,6 +142,7 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
                     host=host,
                     label=label,
                     enabled=entry.get("enabled", False),
+                    ssh_user=ssh_info.get("user"),
                 )
             )
         return result
@@ -159,8 +160,9 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
     return [
         ServerConfig(
             host=h["host"],
-            label=h["host"],  # Use host alias as label
+            label=h["host"],
             enabled=False,
+            ssh_user=h.get("user"),
         )
         for h in gpu_hosts
     ]

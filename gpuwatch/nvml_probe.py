@@ -157,6 +157,24 @@ def _read_proc_comm(pid: int) -> str | None:
         return None
 
 
+def _read_proc_cmdline(pid: int) -> str | None:
+    """Read full command line from /proc/<pid>/cmdline.
+
+    Arguments are separated by null bytes; we replace them with spaces.
+    Returns None on failure (process exited, permission denied, etc.).
+    """
+    try:
+        path = f"/proc/{pid}/cmdline"
+        with open(path, "rb") as f:
+            raw = f.read()
+        if not raw:
+            return None
+        # Replace null bytes with spaces
+        return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+    except (OSError, PermissionError):
+        return None
+
+
 def _read_proc_uid(pid: int) -> int | None:
     """Read UID (owner) of /proc/<pid>/status. Returns None on failure."""
     try:
@@ -188,8 +206,14 @@ def _uid_to_name(uid: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def probe() -> dict[str, Any]:
-    """Collect GPU information via NVML and return as a dict."""
+def probe(own_user: str | None = None) -> dict[str, Any]:
+    """Collect GPU information via NVML and return as a dict.
+
+    Args:
+        own_user: If set, processes from this user are returned in full
+                  detail (with cmdline); other users' processes are
+                  aggregated per user.
+    """
     t_start = time.monotonic()
 
     # Find and load libnvidia-ml
@@ -320,12 +344,11 @@ def probe() -> dict[str, Any]:
             except Exception:
                 gpu["power_limit_watts"] = 0.0
 
-            # Compute processes (also try graphics processes)
+            # Compute processes: own user in detail, others aggregated
             processes: list[dict[str, Any]] = []
+            other_users: dict[str, dict[str, int]] = {}  # user → {count, mem}
             try:
                 proc_count = ctypes.c_uint(0)
-                # First call to get count — may return INSUFFICIENT_SIZE when
-                # count > 0 and buffer is NULL. Both are valid.
                 rc = lib.nvmlDeviceGetComputeRunningProcesses(
                     handle, ctypes.byref(proc_count), None
                 )
@@ -339,24 +362,39 @@ def probe() -> dict[str, Any]:
                             pi = buf[j]
                             name = _read_proc_comm(pi.pid)
                             uid = _read_proc_uid(pi.pid)
+                            username = _uid_to_name(uid) if uid is not None else None
                             gpu_mem = pi.usedGpuMemory
-                            # NVML can return max uint64 for unavailable values
                             if gpu_mem >= (1 << 63):
                                 gpu_mem = 0
-                            processes.append(
-                                {
-                                    "pid": pi.pid,
-                                    "gpu_memory_mb": int(
-                                        gpu_mem // (1024 * 1024)
-                                    ),
-                                    "name": name or "?",
-                                    "user": _uid_to_name(uid) if uid is not None else None,
-                                }
-                            )
+                            mem_mb = int(gpu_mem // (1024 * 1024))
+
+                            if own_user and username == own_user:
+                                # Own process: full detail + cmdline
+                                cmdline = _read_proc_cmdline(pi.pid)
+                                processes.append(
+                                    {
+                                        "pid": pi.pid,
+                                        "gpu_memory_mb": mem_mb,
+                                        "name": name or "?",
+                                        "user": username,
+                                        "cmdline": cmdline,
+                                    }
+                                )
+                            else:
+                                # Other user: aggregate
+                                key = username or "?"
+                                if key not in other_users:
+                                    other_users[key] = {"count": 0, "mem": 0}
+                                other_users[key]["count"] += 1
+                                other_users[key]["mem"] += mem_mb
             except Exception:
                 pass
 
             gpu["processes"] = processes
+            gpu["other_users"] = [
+                {"user": u, "process_count": d["count"], "total_memory_mb": d["mem"]}
+                for u, d in sorted(other_users.items())
+            ]
             gpus.append(gpu)
 
         elapsed = (time.monotonic() - t_start) * 1000
@@ -373,7 +411,13 @@ def probe() -> dict[str, Any]:
 
 
 def main() -> None:
-    result = probe()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--own-user", default=None, help="Highlight processes for this user")
+    args = parser.parse_args()
+
+    result = probe(own_user=args.own_user)
     json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
     sys.stdout.write("\n")
     sys.stdout.flush()

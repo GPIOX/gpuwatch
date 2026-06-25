@@ -66,7 +66,9 @@ class Collector:
         )
         self._notify(host, self._snapshots[host])  # type: ignore[arg-type]
 
-        self._tasks[host] = asyncio.create_task(self._poll_loop(host, config.label))
+        self._tasks[host] = asyncio.create_task(
+            self._poll_loop(host, config.label, config.ssh_user)
+        )
 
     async def stop(self, host: str) -> None:
         """Stop polling a server. Idempotent."""
@@ -83,14 +85,14 @@ class Collector:
         for host in list(self._tasks):
             await self.stop(host)
 
-    async def _poll_loop(self, host: str, label: str) -> None:
+    async def _poll_loop(self, host: str, label: str, ssh_user: str | None) -> None:
         """Single-server polling loop."""
         consecutive_failures = 0
 
         while True:
             try:
                 json_str, latency_ms = await ssh_executor.run_probe(
-                    host, timeout=self._timeout
+                    host, timeout=self._timeout, own_user=ssh_user
                 )
                 data = json.loads(json_str)
 
