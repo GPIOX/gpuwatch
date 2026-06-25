@@ -11,17 +11,16 @@
 ## 安装
 
 ```bash
-git clone <repo-url>
-cd CLI工具
+git clone https://github.com/GPIOX/gpuwatch
+cd gpuwatch
 uv sync
 uv run gpuwatch
 ```
 
-或者用 pip：
+或者一行搞定：
 
 ```bash
-pip install -e .
-gpuwatch
+uv tool install git+https://github.com/GPIOX/gpuwatch && gpuwatch
 ```
 
 本地需要 Python 3.10 以上。远程服务器需要 NVIDIA 驱动和 Python 3，配置好 SSH 免密登录。
