@@ -16,7 +16,16 @@ from rich.text import Text
 from textual.widgets import Static
 
 from ..models import ServerSnapshot
+import os
+
 from .gpu_bar import _format_mem, memory_bar, temp_str, utilization_bar
+
+
+def _truncate_cmd(cmd: str, max_len: int = 70) -> str:
+    """Truncate a command string if too long, appending '…'."""
+    if len(cmd) <= max_len:
+        return cmd
+    return cmd[: max_len - 1] + "…"
 
 
 class ServerPanel(Static):
@@ -158,7 +167,7 @@ class ServerPanel(Static):
                 gpu_table.add_row(proc_label)
                 for proc in gpu.processes:
                     mem_str = _format_mem(proc.gpu_memory_mb)
-                    cmd = proc.cmdline or proc.name
+                    cmd = _truncate_cmd(proc.cmdline or proc.name)
 
                     proc_text = Text()
                     proc_text.append(
