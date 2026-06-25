@@ -15,6 +15,13 @@ from .models import ServerConfig
 
 logger = logging.getLogger(__name__)
 
+# Known code-hosting / non-server domains to skip in auto-discovery
+_SKIP_HOSTNAMES = {
+    "github.com", "gitlab.com", "bitbucket.org",
+    "codeberg.org", "gitee.com",
+}
+
+
 def parse_ssh_config(path: str | None = None) -> list[dict[str, str]]:
     """Parse ~/.ssh/config and return a list of Host entries.
 
@@ -129,9 +136,11 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
             )
         return result
 
-    # Show all non-wildcard hosts from SSH config.
-    # User toggles which ones to monitor in the TUI.
-    # Non-GPU servers will show an error state gracefully.
+    # Show all non-wildcard hosts, skipping known code-hosting domains.
+    servers = [
+        h for h in ssh_hosts
+        if h.get("hostname", "").lower() not in _SKIP_HOSTNAMES
+    ]
     return [
         ServerConfig(
             host=h["host"],
@@ -139,5 +148,5 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
             enabled=False,
             ssh_user=h.get("user"),
         )
-        for h in ssh_hosts
+        for h in servers
     ]
