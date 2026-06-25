@@ -43,6 +43,7 @@ class ServerPanel(Static):
         self._label = label
         self._snapshot: ServerSnapshot | None = None
         self.compact: bool = False
+        self.name_width: int = 10  # set by Dashboard, updated dynamically
 
     @property
     def host(self) -> str:
@@ -146,11 +147,9 @@ class ServerPanel(Static):
         wrapper.add_column("body", justify="left")
 
         # ── GPU metric grid (nested fixed-column table) ──
-        name_width = min(max((len(g.name) for g in snap.gpus), default=10), 35)
-
         gpu_grid = Table(show_header=False, expand=True, box=None, padding=0)
         gpu_grid.add_column("gpu", width=5, justify="left")
-        gpu_grid.add_column("name", width=name_width, justify="left")
+        gpu_grid.add_column("name", width=self.name_width, justify="left")
         gpu_grid.add_column("util", width=15, justify="left")
         gpu_grid.add_column("mem", width=36, justify="left")
         gpu_grid.add_column("temp", width=5, justify="left")
@@ -197,11 +196,9 @@ class ServerPanel(Static):
 
     def _build_compact(self, snap: ServerSnapshot) -> Table:
         """Compact: one line per GPU, process summary inline."""
-        name_width = min(max((len(g.name) for g in snap.gpus), default=10), 35)
-
         gpu_grid = Table(show_header=False, expand=True, box=None, padding=0)
         gpu_grid.add_column("gpu", width=5, justify="left")
-        gpu_grid.add_column("name", width=name_width, justify="left")
+        gpu_grid.add_column("name", width=self.name_width, justify="left")
         gpu_grid.add_column("util", width=14, justify="left")
         gpu_grid.add_column("mem", width=37, justify="left")
         gpu_grid.add_column("temp", width=5, justify="left")

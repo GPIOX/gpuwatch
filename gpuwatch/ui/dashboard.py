@@ -14,7 +14,7 @@ class Dashboard(VerticalScroll, can_focus=False):
     """Scrollable container holding all active server panels.
 
     Not focusable — focus stays on the ServerSelector sidebar.
-    Scrolling works via mouse wheel / touchpad.
+    Tracks the global max GPU name width so all panels align.
     """
 
     DEFAULT_CSS = """
@@ -29,6 +29,7 @@ class Dashboard(VerticalScroll, can_focus=False):
         super().__init__()
         self._panels: dict[str, ServerPanel] = {}
         self._compact: bool = False
+        self._name_width: int = 10
 
     @property
     def compact(self) -> bool:
@@ -41,11 +42,31 @@ class Dashboard(VerticalScroll, can_focus=False):
             panel.compact = value
             panel.refresh(layout=True)
 
+    def _compute_name_width(self) -> int:
+        """Find the longest GPU name across all active panels."""
+        max_len = 10
+        for panel in self._panels.values():
+            snap = panel._snapshot
+            if snap and snap.gpus:
+                for g in snap.gpus:
+                    max_len = max(max_len, len(g.name))
+        return min(max_len, 35)
+
+    def _apply_name_width(self) -> None:
+        """Recompute and push name width to all panels."""
+        w = self._compute_name_width()
+        if w != self._name_width:
+            self._name_width = w
+            for panel in self._panels.values():
+                panel.name_width = w
+                panel.refresh(layout=True)
+
     def ensure_panel(self, host: str, label: str) -> ServerPanel:
         """Get or create a panel widget for a server."""
         if host not in self._panels:
             panel = ServerPanel(host, label)
             panel.compact = self._compact
+            panel.name_width = self._name_width
             self._panels[host] = panel
             self.mount(panel)
             self.refresh(layout=True)
@@ -56,6 +77,7 @@ class Dashboard(VerticalScroll, can_focus=False):
         panel = self._panels.get(host)
         if panel is not None:
             panel.update_snapshot(snapshot)
+            self._apply_name_width()
 
     def remove_panel(self, host: str) -> None:
         """Remove a server panel (when monitoring is stopped)."""
@@ -63,3 +85,4 @@ class Dashboard(VerticalScroll, can_focus=False):
         if panel is not None:
             panel.remove()
             self.refresh(layout=True)
+            self._apply_name_width()
