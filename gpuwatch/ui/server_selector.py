@@ -52,8 +52,8 @@ class ServerItem(Static, can_focus=True):
         self.post_message(self.Toggled(self.host, self._enabled))
 
     def render(self) -> str:
-        check = "[bold green]✓[/]" if self._enabled else "[ ]"
-        has_focus = ">" if self.has_focus else " "
+        check = "[bold green]◉[/]" if self._enabled else "[dim]○[/]"
+        has_focus = "[cyan]▸[/]" if self.has_focus else " "
         status = f" {self._status}" if self._status else ""
         return f"{has_focus} {check} {self.server_label}{status}"
 

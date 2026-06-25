@@ -56,12 +56,16 @@ class ServerPanel(Static):
             )
 
         snap = self._snapshot
-        return Panel(self._build_content(snap), title=self._build_title(snap))
+        return Panel(
+            self._build_content(snap),
+            title=self._build_title(snap),
+            border_style="bright_black",
+        )
 
     def _build_title(self, snap: ServerSnapshot) -> Text:
         """Build the panel title line: 'two4090     OK  42ms  12:31:04'."""
         title = Text()
-        title.append(snap.label, style="bold white")
+        title.append(snap.label, style="bold cyan")
 
         # Status indicator
         status_colors = {
@@ -182,8 +186,7 @@ class ServerPanel(Static):
             # ── Other users (aggregated, dimmed) ──
             if gpu.other_users:
                 if gpu.processes:
-                    # Separator between own and others
-                    gpu_table.add_row(Text("  ─" * 30, style="dim"))
+                    gpu_table.add_row(Text("  ─────────────────────────────────────────────", style="dim"))
                 for ou in gpu.other_users:
                     mem_str = _format_mem(ou.total_memory_mb)
                     other_text = Text()
