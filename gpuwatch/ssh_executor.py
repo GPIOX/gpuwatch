@@ -88,6 +88,11 @@ async def run_probe(
             "-o", f"ControlPath={_ctrl_dir}/%C",
         ]
 
+    # On Windows, subprocess pipes default to the system code page (e.g. GBK).
+    # PYTHONUTF8=1 forces UTF-8 for pipe I/O to avoid decode errors.
+    import os as _os
+    env = {**_os.environ, "PYTHONUTF8": "1"}
+
     proc = await asyncio.create_subprocess_exec(
         "ssh",
         *ssh_opts,
@@ -97,6 +102,7 @@ async def run_probe(
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
 
     try:
