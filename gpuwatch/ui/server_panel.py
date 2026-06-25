@@ -132,111 +132,86 @@ class ServerPanel(Static):
         return gpu_table
 
     def _build_full(self, snap: ServerSnapshot) -> Table:
-        """Full layout: fixed-width columns for perfect alignment."""
-        gpu_table = Table(
-            show_header=False, expand=True, box=None, padding=(0, 1),
-        )
-        # Fixed column widths ensure all rows align regardless of content
-        gpu_table.add_column("gpu", width=5, justify="left")
-        gpu_table.add_column("name", width=26, justify="left")
-        gpu_table.add_column("util", width=16, justify="left")
-        gpu_table.add_column("mem", width=40, justify="left")
-        gpu_table.add_column("temp", width=5, justify="left")
-        gpu_table.add_column("power", width=6, justify="left")
+        """GPU metric rows in fixed columns, process info as indented text below."""
+        wrapper = Table(show_header=False, expand=True, box=None, padding=(0, 1))
+        # Single-column wrapper so process text can flow freely
+        wrapper.add_column("body", justify="left")
+
+        # ── GPU metric grid (nested fixed-column table) ──
+        gpu_grid = Table(show_header=False, expand=True, box=None, padding=0)
+        gpu_grid.add_column("gpu", width=5, justify="left")
+        gpu_grid.add_column("name", width=24, justify="left")
+        gpu_grid.add_column("util", width=15, justify="left")
+        gpu_grid.add_column("mem", width=36, justify="left")
+        gpu_grid.add_column("temp", width=5, justify="left")
+        gpu_grid.add_column("power", width=6, justify="left")
 
         for gpu in snap.gpus:
-            util_text = utilization_bar(gpu.utilization_gpu, width=12)
-            mem_text = memory_bar(
-                gpu.memory_used_mb, gpu.memory_total_mb, width=18
-            )
-            temp_text = temp_str(gpu.temperature_c)
-            power_text = power_str(gpu.power_watts, gpu.power_limit_watts)
-
-            gpu_table.add_row(
-                Text(f"{gpu.index}", style="bold cyan"),
-                Text(_truncate(gpu.name, 25), style="white"),
-                util_text,
-                mem_text,
-                temp_text,
-                power_text,
+            gpu_grid.add_row(
+                Text(f"GPU {gpu.index}", style="bold cyan"),
+                Text(_truncate(gpu.name, 23), style="white"),
+                utilization_bar(gpu.utilization_gpu, width=11),
+                memory_bar(gpu.memory_used_mb, gpu.memory_total_mb, width=18),
+                temp_str(gpu.temperature_c),
+                power_str(gpu.power_watts, gpu.power_limit_watts),
             )
 
-            # ── Own processes ──
+        wrapper.add_row(gpu_grid)
+
+        # ── Process details (free-form indented text below GPU grid) ──
+        for gpu in snap.gpus:
             if gpu.processes:
-                gpu_table.add_row(Text(""))  # spacer
-                gpu_table.add_row(
-                    Text("", style=""), Text("", style=""),
-                    Text("PID      Mem     Command", style="bold underline"),
-                    Text("", style=""), Text("", style=""), Text("", style=""),
-                )
+                wrapper.add_row(Text(""))  # spacer
+                wrapper.add_row(Text(
+                    f"  GPU {gpu.index}  PID      Mem     Command",
+                    style="bold underline",
+                ))
                 for proc in gpu.processes:
                     mem_str = _format_mem(proc.gpu_memory_mb)
                     cmd = _truncate(proc.cmdline or proc.name)
-                    gpu_table.add_row(
-                        Text("", style=""),
-                        Text(f"  {proc.pid:<7} {mem_str:>9}  {cmd}", style="green"),
-                        Text("", style=""),
-                        Text("", style=""),
-                        Text("", style=""),
-                        Text("", style=""),
-                    )
+                    wrapper.add_row(Text(
+                        f"        {proc.pid:<7} {mem_str:>9}  {cmd}",
+                        style="green",
+                    ))
 
-            # ── Other users ──
             if gpu.other_users:
-                gpu_table.add_row(Text(""))  # spacer
+                wrapper.add_row(Text(""))  # spacer
                 for ou in gpu.other_users:
                     mem_str = _format_mem(ou.total_memory_mb)
-                    gpu_table.add_row(
-                        Text("", style=""),
-                        Text(
-                            f"  {ou.user}: {ou.process_count} proc, {mem_str}",
-                            style="dim",
-                        ),
-                        Text("", style=""),
-                        Text("", style=""),
-                        Text("", style=""),
-                        Text("", style=""),
-                    )
+                    wrapper.add_row(Text(
+                        f"  GPU {gpu.index}  {ou.user}: {ou.process_count} proc, {mem_str}",
+                        style="dim",
+                    ))
 
-            if gpu.index < len(snap.gpus) - 1:
-                gpu_table.add_row(Text(""), Text(""), Text(""), Text(""), Text(""), Text(""))
-
-        return gpu_table
+        return wrapper
 
     def _build_compact(self, snap: ServerSnapshot) -> Table:
-        """Compact layout: fixed-width columns, one line per GPU."""
-        gpu_table = Table(
-            show_header=False, expand=True, box=None, padding=(0, 1),
-        )
-        gpu_table.add_column("gpu", width=4, justify="left")
-        gpu_table.add_column("name", width=26, justify="left")
-        gpu_table.add_column("util", width=14, justify="left")
-        gpu_table.add_column("mem", width=38, justify="left")
-        gpu_table.add_column("temp", width=5, justify="left")
-        gpu_table.add_column("power", width=6, justify="left")
-        gpu_table.add_column("proc", width=30, justify="left")
+        """Compact: one line per GPU, process summary inline."""
+        gpu_grid = Table(show_header=False, expand=True, box=None, padding=0)
+        gpu_grid.add_column("gpu", width=5, justify="left")
+        gpu_grid.add_column("name", width=24, justify="left")
+        gpu_grid.add_column("util", width=14, justify="left")
+        gpu_grid.add_column("mem", width=37, justify="left")
+        gpu_grid.add_column("temp", width=5, justify="left")
+        gpu_grid.add_column("power", width=6, justify="left")
+        gpu_grid.add_column("proc", width=20, justify="left")
 
         for gpu in snap.gpus:
-            util_text = utilization_bar(gpu.utilization_gpu, width=10)
-            mem_text = memory_bar(gpu.memory_used_mb, gpu.memory_total_mb, width=20)
-            temp_text = temp_str(gpu.temperature_c)
-            power_text = power_str(gpu.power_watts, gpu.power_limit_watts)
-
             proc_parts: list[str] = [p.name for p in gpu.processes]
             if gpu.other_users:
                 other_total = sum(ou.total_memory_mb for ou in gpu.other_users)
                 other_count = sum(ou.process_count for ou in gpu.other_users)
-                proc_parts.append(f"+{other_count} other ({_format_mem(other_total)})")
+                proc_parts.append(f"+{other_count}o/{_format_mem(other_total)}")
             proc_str = ", ".join(proc_parts) if proc_parts else "—"
 
-            gpu_table.add_row(
-                Text(f"{gpu.index}", style="bold cyan"),
-                Text(_truncate(gpu.name, 25), style="white"),
-                util_text,
-                mem_text,
-                temp_text,
-                power_text,
-                Text(_truncate(proc_str, 29), style="green"),
+            gpu_grid.add_row(
+                Text(f"GPU {gpu.index}", style="bold cyan"),
+                Text(_truncate(gpu.name, 23), style="white"),
+                utilization_bar(gpu.utilization_gpu, width=10),
+                memory_bar(gpu.memory_used_mb, gpu.memory_total_mb, width=18),
+                temp_str(gpu.temperature_c),
+                power_str(gpu.power_watts, gpu.power_limit_watts),
+                Text(_truncate(proc_str, 23), style="green"),
             )
 
-        return gpu_table
+        return gpu_grid
