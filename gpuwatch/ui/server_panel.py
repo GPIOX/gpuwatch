@@ -26,6 +26,14 @@ def _truncate(text: str, max_len: int = 70) -> str:
     return text[: max_len - 1] + "…"
 
 
+def _short_gpu_name(name: str) -> str:
+    """Strip redundant branding: 'NVIDIA GeForce RTX 3090 Ti' → 'RTX 3090 Ti'."""
+    for prefix in ("NVIDIA GeForce ", "NVIDIA ", "GeForce "):
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
+
+
 class ServerPanel(Static):
     """A panel displaying one server's GPU status."""
 
@@ -138,9 +146,11 @@ class ServerPanel(Static):
         wrapper.add_column("body", justify="left")
 
         # ── GPU metric grid (nested fixed-column table) ──
+        name_width = min(max((len(g.name) for g in snap.gpus), default=10), 35)
+
         gpu_grid = Table(show_header=False, expand=True, box=None, padding=0)
         gpu_grid.add_column("gpu", width=5, justify="left")
-        gpu_grid.add_column("name", width=24, justify="left")
+        gpu_grid.add_column("name", width=name_width, justify="left")
         gpu_grid.add_column("util", width=15, justify="left")
         gpu_grid.add_column("mem", width=36, justify="left")
         gpu_grid.add_column("temp", width=5, justify="left")
@@ -149,7 +159,7 @@ class ServerPanel(Static):
         for gpu in snap.gpus:
             gpu_grid.add_row(
                 Text(f"GPU {gpu.index}", style="bold cyan"),
-                Text(_truncate(gpu.name, 23), style="white"),
+                Text(gpu.name, style="white"),
                 utilization_bar(gpu.utilization_gpu, width=11),
                 memory_bar(gpu.memory_used_mb, gpu.memory_total_mb, width=18),
                 temp_str(gpu.temperature_c),
@@ -187,9 +197,11 @@ class ServerPanel(Static):
 
     def _build_compact(self, snap: ServerSnapshot) -> Table:
         """Compact: one line per GPU, process summary inline."""
+        name_width = min(max((len(g.name) for g in snap.gpus), default=10), 35)
+
         gpu_grid = Table(show_header=False, expand=True, box=None, padding=0)
         gpu_grid.add_column("gpu", width=5, justify="left")
-        gpu_grid.add_column("name", width=24, justify="left")
+        gpu_grid.add_column("name", width=name_width, justify="left")
         gpu_grid.add_column("util", width=14, justify="left")
         gpu_grid.add_column("mem", width=37, justify="left")
         gpu_grid.add_column("temp", width=5, justify="left")
@@ -206,7 +218,7 @@ class ServerPanel(Static):
 
             gpu_grid.add_row(
                 Text(f"GPU {gpu.index}", style="bold cyan"),
-                Text(_truncate(gpu.name, 23), style="white"),
+                Text(gpu.name, style="white"),
                 utilization_bar(gpu.utilization_gpu, width=10),
                 memory_bar(gpu.memory_used_mb, gpu.memory_total_mb, width=18),
                 temp_str(gpu.temperature_c),
