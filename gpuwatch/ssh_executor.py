@@ -61,30 +61,36 @@ async def run_probe(
     loop = asyncio.get_running_loop()
     start = loop.time()
 
-    # SSH multiplexing: reuse connections to reduce per-poll overhead.
-    # %C is a hash of %l%h%p%r%j — safe for Unix socket path limits.
-    import os as _os
-    _ctrl_dir = _os.path.expanduser("~/.ssh/controlmasters")
-    _os.makedirs(_ctrl_dir, mode=0o700, exist_ok=True)
-
     # Build remote command: python3 - [--own-user <user>]
-    # ssh passes remote command through the remote shell, so quote the user value
-    # to prevent shell injection from unusual usernames.
     import shlex
     remote_cmd = ["python3", "-"]
     if own_user:
         remote_cmd.extend(["--own-user", shlex.quote(own_user)])
 
-    proc = await asyncio.create_subprocess_exec(
-        "ssh",
-        "-T",  # disable pseudo-terminal allocation
-        "-o", "BatchMode=yes",  # never prompt for password
+    # SSH multiplexing: reuse connections on Linux/macOS via Unix sockets.
+    # Windows OpenSSH uses named pipes instead and chokes on Unix-style
+    # ControlPath; skip multiplexing there (overhead is negligible).
+    ssh_opts = [
+        "-T",
+        "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=3",
         "-o", "StrictHostKeyChecking=accept-new",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPersist=60s",
-        "-o", f"ControlPath={_ctrl_dir}/%C",
-        "--",  # prevent alias starting with '-' being parsed as option
+    ]
+    import sys as _sys
+    if _sys.platform != "win32":
+        import os as _os
+        _ctrl_dir = _os.path.expanduser("~/.ssh/controlmasters")
+        _os.makedirs(_ctrl_dir, mode=0o700, exist_ok=True)
+        ssh_opts += [
+            "-o", "ControlMaster=auto",
+            "-o", "ControlPersist=60s",
+            "-o", f"ControlPath={_ctrl_dir}/%C",
+        ]
+
+    proc = await asyncio.create_subprocess_exec(
+        "ssh",
+        *ssh_opts,
+        "--",
         host_alias,
         *remote_cmd,
         stdin=asyncio.subprocess.PIPE,
