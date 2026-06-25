@@ -81,11 +81,18 @@ def parse_ssh_config(path: str | None = None) -> list[dict[str, str]]:
             # Save previous host entry
             if current and current.get("host"):
                 hosts.append(current)
-            # Start new entry; skip wildcards
-            if "*" in value or "?" in value:
-                current = None
+            # Parse aliases; SSH supports "Host gpu1 gpu2"
+            import shlex
+            try:
+                aliases = shlex.split(value)
+            except ValueError:
+                aliases = value.split()
+            non_wildcard = [a for a in aliases if "*" not in a and "?" not in a]
+            if non_wildcard:
+                # Use first non-wildcard alias as primary
+                current = {"host": non_wildcard[0]}
             else:
-                current = {"host": value}
+                current = None
         elif current is not None and keyword in ("hostname", "port", "user"):
             current[keyword] = value
 

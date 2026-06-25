@@ -81,9 +81,11 @@ class Collector:
                 pass
 
     async def stop_all(self) -> None:
-        """Cancel all polling tasks."""
-        for host in list(self._tasks):
-            await self.stop(host)
+        """Cancel all polling tasks concurrently."""
+        await asyncio.gather(
+            *(self.stop(host) for host in list(self._tasks)),
+            return_exceptions=True,
+        )
 
     async def _poll_loop(self, host: str, label: str, ssh_user: str | None) -> None:
         """Single-server polling loop."""

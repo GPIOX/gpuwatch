@@ -10,13 +10,11 @@ from __future__ import annotations
 import time
 
 from rich.panel import Panel
-from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual.widgets import Static
 
 from ..models import ServerSnapshot
-import os
 
 from .gpu_bar import _format_mem, memory_bar, power_str, temp_str, utilization_bar
 
@@ -121,9 +119,9 @@ class ServerPanel(Static):
         # Prepend error banner if there's an error (preserves GPU data below it)
         if snap.error:
             wrapper = Table(show_header=False, expand=True, box=None)
-            wrapper.add_row(
-                Text(f"[bold red]Error:[/] {snap.error}", style="red")
-            )
+            err_text = Text("Error: ", style="bold red")
+            err_text.append(snap.error, style="red")
+            wrapper.add_row(err_text)
             if snap.gpus:
                 wrapper.add_row(Text(""))
                 wrapper.add_row(Text("Showing last known data:", style="dim"))
@@ -149,7 +147,7 @@ class ServerPanel(Static):
 
             gpu_row = Text()
             gpu_row.append(f"GPU {gpu.index}  ", style="bold cyan")
-            gpu_row.append(f"{gpu.name:24s}", style="white")
+            gpu_row.append(f"{_truncate(gpu.name, 24):24s}", style="white")
             gpu_row.append("  ")
             gpu_row.append(util_text)
             gpu_row.append("  ")
@@ -238,7 +236,7 @@ class ServerPanel(Static):
 
             row = Text()
             row.append(f"GPU{gpu.index:<2} ", style="bold cyan")
-            row.append(f"{gpu.name:22s}", style="white")
+            row.append(f"{_truncate(gpu.name, 22):22s}", style="white")
             row.append(" ")
             row.append(util_text)
             row.append(" ")

@@ -10,7 +10,6 @@ No extra SSH library needed — uses asyncio subprocess.
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 
@@ -69,9 +68,12 @@ async def run_probe(
     _os.makedirs(_ctrl_dir, mode=0o700, exist_ok=True)
 
     # Build remote command: python3 - [--own-user <user>]
+    # ssh passes remote command through the remote shell, so quote the user value
+    # to prevent shell injection from unusual usernames.
+    import shlex
     remote_cmd = ["python3", "-"]
     if own_user:
-        remote_cmd.extend(["--own-user", own_user])
+        remote_cmd.extend(["--own-user", shlex.quote(own_user)])
 
     proc = await asyncio.create_subprocess_exec(
         "ssh",
