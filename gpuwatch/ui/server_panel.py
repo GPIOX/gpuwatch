@@ -132,10 +132,17 @@ class ServerPanel(Static):
         return gpu_table
 
     def _build_full(self, snap: ServerSnapshot) -> Table:
-        """Full layout: one row per GPU + own processes + aggregated other users."""
+        """Full layout: fixed-width columns for perfect alignment."""
         gpu_table = Table(
-            show_header=False, expand=True, box=None, padding=(0, 1)
+            show_header=False, expand=True, box=None, padding=(0, 1),
         )
+        # Fixed column widths ensure all rows align regardless of content
+        gpu_table.add_column("gpu", width=5, justify="left")
+        gpu_table.add_column("name", width=26, justify="left")
+        gpu_table.add_column("util", width=16, justify="left")
+        gpu_table.add_column("mem", width=40, justify="left")
+        gpu_table.add_column("temp", width=5, justify="left")
+        gpu_table.add_column("power", width=6, justify="left")
 
         for gpu in snap.gpus:
             util_text = utilization_bar(gpu.utilization_gpu, width=12)
@@ -145,108 +152,91 @@ class ServerPanel(Static):
             temp_text = temp_str(gpu.temperature_c)
             power_text = power_str(gpu.power_watts, gpu.power_limit_watts)
 
-            gpu_row = Text()
-            gpu_row.append(f"GPU {gpu.index}  ", style="bold cyan")
-            gpu_row.append(f"{_truncate(gpu.name, 24):24s}", style="white")
-            gpu_row.append("  ")
-            gpu_row.append(util_text)
-            gpu_row.append("  ")
-            gpu_row.append(mem_text)
-            gpu_row.append("  ")
-            gpu_row.append(temp_text)
-            gpu_row.append("  ")
-            gpu_row.append(power_text)
-            gpu_table.add_row(gpu_row)
+            gpu_table.add_row(
+                Text(f"{gpu.index}", style="bold cyan"),
+                Text(_truncate(gpu.name, 25), style="white"),
+                util_text,
+                mem_text,
+                temp_text,
+                power_text,
+            )
 
-            # ── Own processes (highlighted with full cmdline) ──
+            # ── Own processes ──
             if gpu.processes:
                 gpu_table.add_row(Text(""))  # spacer
-                proc_label = Text(
-                    "  PID      GPU Mem   Command", style="bold underline"
+                gpu_table.add_row(
+                    Text("", style=""), Text("", style=""),
+                    Text("PID      Mem     Command", style="bold underline"),
+                    Text("", style=""), Text("", style=""), Text("", style=""),
                 )
-                gpu_table.add_row(proc_label)
                 for proc in gpu.processes:
                     mem_str = _format_mem(proc.gpu_memory_mb)
                     cmd = _truncate(proc.cmdline or proc.name)
-
-                    proc_text = Text()
-                    proc_text.append(
-                        f"  {proc.pid:<7} ", style="cyan"
+                    gpu_table.add_row(
+                        Text("", style=""),
+                        Text(f"  {proc.pid:<7} {mem_str:>9}  {cmd}", style="green"),
+                        Text("", style=""),
+                        Text("", style=""),
+                        Text("", style=""),
+                        Text("", style=""),
                     )
-                    proc_text.append(
-                        f"{mem_str:>9} ", style="yellow"
-                    )
-                    proc_text.append(f"  {cmd}", style="green")
-                    gpu_table.add_row(proc_text)
 
-            # ── Other users (aggregated, dimmed) ──
+            # ── Other users ──
             if gpu.other_users:
                 gpu_table.add_row(Text(""))  # spacer
-                if gpu.processes:
-                    gpu_table.add_row(Text("  ─────────────────────────────────────────────", style="dim"))
                 for ou in gpu.other_users:
                     mem_str = _format_mem(ou.total_memory_mb)
-                    other_text = Text()
-                    other_text.append(
-                        f"  {ou.user:<15} ", style="bright_black"
+                    gpu_table.add_row(
+                        Text("", style=""),
+                        Text(
+                            f"  {ou.user}: {ou.process_count} proc, {mem_str}",
+                            style="dim",
+                        ),
+                        Text("", style=""),
+                        Text("", style=""),
+                        Text("", style=""),
+                        Text("", style=""),
                     )
-                    other_text.append(
-                        f"{ou.process_count} proc, {mem_str}",
-                        style="dim",
-                    )
-                    gpu_table.add_row(other_text)
 
             if gpu.index < len(snap.gpus) - 1:
-                gpu_table.add_row(Text("", style="dim"))
+                gpu_table.add_row(Text(""), Text(""), Text(""), Text(""), Text(""), Text(""))
 
         return gpu_table
 
     def _build_compact(self, snap: ServerSnapshot) -> Table:
-        """Compact layout: one line per GPU, own process + other user summary inline."""
+        """Compact layout: fixed-width columns, one line per GPU."""
         gpu_table = Table(
-            show_header=False, expand=True, box=None, padding=(0, 1)
+            show_header=False, expand=True, box=None, padding=(0, 1),
         )
-
-        header = Text()
-        header.append(
-            f"{'GPU':<5} {'Name':<22} {'Util':>5}  {'Memory':<24} {'Temp':>4}  {'Power':>10}  Processes",
-            style="bold underline",
-        )
-        gpu_table.add_row(header)
+        gpu_table.add_column("gpu", width=4, justify="left")
+        gpu_table.add_column("name", width=26, justify="left")
+        gpu_table.add_column("util", width=14, justify="left")
+        gpu_table.add_column("mem", width=38, justify="left")
+        gpu_table.add_column("temp", width=5, justify="left")
+        gpu_table.add_column("power", width=6, justify="left")
+        gpu_table.add_column("proc", width=30, justify="left")
 
         for gpu in snap.gpus:
             util_text = utilization_bar(gpu.utilization_gpu, width=10)
-            mem_text = memory_bar(
-                gpu.memory_used_mb, gpu.memory_total_mb, width=20
-            )
+            mem_text = memory_bar(gpu.memory_used_mb, gpu.memory_total_mb, width=20)
             temp_text = temp_str(gpu.temperature_c)
             power_text = power_str(gpu.power_watts, gpu.power_limit_watts)
 
-            # Build process summary
-            proc_parts: list[str] = []
-            for proc in gpu.processes:
-                proc_parts.append(f"{proc.name}")
+            proc_parts: list[str] = [p.name for p in gpu.processes]
             if gpu.other_users:
                 other_total = sum(ou.total_memory_mb for ou in gpu.other_users)
                 other_count = sum(ou.process_count for ou in gpu.other_users)
-                proc_parts.append(
-                    f"+{other_count} other ({_format_mem(other_total)})"
-                )
-            proc_str = ", ".join(proc_parts) if proc_parts else "-"
+                proc_parts.append(f"+{other_count} other ({_format_mem(other_total)})")
+            proc_str = ", ".join(proc_parts) if proc_parts else "—"
 
-            row = Text()
-            row.append(f"GPU{gpu.index:<2} ", style="bold cyan")
-            row.append(f"{_truncate(gpu.name, 22):22s}", style="white")
-            row.append(" ")
-            row.append(util_text)
-            row.append(" ")
-            row.append(mem_text)
-            row.append(" ")
-            row.append(temp_text)
-            row.append("  ")
-            row.append(power_text)
-            row.append("  ")
-            row.append(proc_str, style="green")
-            gpu_table.add_row(row)
+            gpu_table.add_row(
+                Text(f"{gpu.index}", style="bold cyan"),
+                Text(_truncate(gpu.name, 25), style="white"),
+                util_text,
+                mem_text,
+                temp_text,
+                power_text,
+                Text(_truncate(proc_str, 29), style="green"),
+            )
 
         return gpu_table
