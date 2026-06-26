@@ -252,7 +252,7 @@ def _gpu_processes(
     handle,
     gpu_uuid: str,
     own_user: str | None,
-    nvsmi_data: dict[str, list[dict[str, Any]]] | None = None,
+    nvsmi_data: dict[str, list[dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Collect processes for one GPU.
 
@@ -295,11 +295,9 @@ def _gpu_processes(
     except Exception:
         pass
 
-    # Fallback to nvidia-smi data. Fetch on demand if the pre-check
-    # on GPU 0 didn't catch a permission issue on another GPU.
+    # Fallback to nvidia-smi data. Always fetched once at probe start,
+    # so nvsmi_data is never None by the time we get here.
     if use_nvsmi:
-        if nvsmi_data is None:
-            nvsmi_data = _run_nvsmi_processes()
         for pi in nvsmi_data.get(gpu_uuid, []):
             # Resolve user from /proc for own/other classification
             uid = _read_proc_uid(pi["pid"])
@@ -416,18 +414,10 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
         gpus: list[dict[str, Any]] = []
         handle = ctypes.c_void_p()
 
-        # Pre-check: does NVML allow process queries? If not, pre-fetch
-        # nvidia-smi process data once for all GPUs.
-        nvsmi_data: dict[str, list[dict[str, Any]]] | None = None
-        if count.value > 0:
-            proc_count = ctypes.c_uint(0)
-            test_handle = ctypes.c_void_p()
-            rc0 = lib.nvmlDeviceGetHandleByIndex(0, ctypes.byref(test_handle))
-            rc1 = lib.nvmlDeviceGetComputeRunningProcesses(
-                test_handle, ctypes.byref(proc_count), None
-            )
-            if rc1 == NVML_ERROR_NO_PERMISSION:
-                nvsmi_data = _run_nvsmi_processes()
+        # Always pre-fetch nvidia-smi process data as fallback.
+        # NVML process queries may fail with NO_PERMISSION on any GPU,
+        # not just GPU 0. One nvidia-smi call covers all GPUs at once.
+        nvsmi_data = _run_nvsmi_processes() if count.value > 0 else {}
 
         for i in range(count.value):
             gpu: dict[str, Any] = {"index": i}
