@@ -40,7 +40,10 @@ class RemotePythonNotFound(SSHCommandError):
 
 
 async def run_probe(
-    host_alias: str, timeout: float = 5.0, own_user: str | None = None
+    host_alias: str,
+    timeout: float = 5.0,
+    own_user: str | None = None,
+    reserved_offsets: dict[int, int] | None = None,
 ) -> tuple[str, float]:
     """Execute the NVML probe on a remote server via SSH.
 
@@ -64,9 +67,12 @@ async def run_probe(
     # Build remote command — force UTF-8 on the remote side to avoid
     # GBK/cp1252 decode errors on Windows when reading the probe via stdin.
     import shlex
+    import json as _json
     remote_cmd = ["env", "PYTHONIOENCODING=utf-8", "python3", "-"]
     if own_user:
         remote_cmd.extend(["--own-user", shlex.quote(own_user)])
+    if reserved_offsets:
+        remote_cmd.extend(["--reserved-offsets", shlex.quote(_json.dumps(reserved_offsets))])
 
     # SSH multiplexing: reuse connections on Linux/macOS via Unix sockets.
     # Windows OpenSSH uses named pipes instead and chokes on Unix-style

@@ -247,31 +247,79 @@ def _run_nvsmi_processes() -> dict[str, list[dict[str, Any]]]:
     return result
 
 
-def _run_nvsmi_memory() -> dict[int, int]:
-    """Get per-GPU user-visible memory usage from nvidia-smi.
+def _try_nvml_v2_memory(lib, handle) -> tuple[int, int] | None:
+    """Try NVML v2 memory info to get reserved field. Returns (used_mb, free_mb) or None."""
+    try:
+        func = lib.nvmlDeviceGetMemoryInfo_v2
+    except AttributeError:
+        return None
 
-    NVML's nvmlMemory_t.used = total - free (includes driver reserved
-    framebuffer, typically 400-450 MB). nvidia-smi reports used and
-    reserved separately. We fetch the user-visible value here.
+    class NvmlMemoryV2(ctypes.Structure):
+        _fields_ = [
+            ("version", ctypes.c_uint),
+            ("_pad", ctypes.c_uint),
+            ("total", ctypes.c_ulonglong),
+            ("free", ctypes.c_ulonglong),
+            ("used", ctypes.c_ulonglong),
+            ("reserved", ctypes.c_ulonglong),
+        ]
+
+    func.argtypes = [ctypes.c_void_p, ctypes.POINTER(NvmlMemoryV2)]
+    func.restype = ctypes.c_int
+    m = NvmlMemoryV2()
+    m.version = 2
+    rc = func(handle, ctypes.byref(m))
+    if rc == NVML_SUCCESS:
+        total_mb = int(m.total // (1024 * 1024))
+        free_mb = int(m.free // (1024 * 1024))
+        used_mb = int((m.total - m.free - m.reserved) // (1024 * 1024))
+        return (used_mb, free_mb)
+    return None
+
+
+def _calibrate_reserved(lib, handle, count) -> dict[int, int]:
+    """One-time: run nvidia-smi to get per-GPU reserved memory offsets.
+    Returns {gpu_index: reserved_mb} so subsequent polls can compute
+    user-visible used = NVML_total - NVML_free - reserved.
     """
     import subprocess
     try:
         output = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=index,memory.used",
+            ["nvidia-smi", "--query-gpu=index,memory.used,memory.total",
              "--format=csv,noheader,nounits"],
             stderr=subprocess.DEVNULL, timeout=3,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         return {}
-    result: dict[int, int] = {}
+
+    offsets: dict[int, int] = {}
+    smi_mem: dict[int, int] = {}
     for line in output.decode("utf-8", errors="replace").strip().split("\n"):
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 2:
+        if len(parts) >= 3:
             try:
-                result[int(parts[0])] = int(parts[1])
+                smi_mem[int(parts[0])] = int(parts[1])
             except ValueError:
                 pass
-    return result
+
+    # For each GPU, compute reserved = NVML(total-free) - nvidia_smi(used)
+    for i in range(count.value):
+        if i not in smi_mem:
+            continue
+        test_handle = ctypes.c_void_p()
+        rc = lib.nvmlDeviceGetHandleByIndex(i, ctypes.byref(test_handle))
+        if rc != NVML_SUCCESS:
+            continue
+        mem = NvmlMemory()
+        rc = lib.nvmlDeviceGetMemoryInfo(test_handle, ctypes.byref(mem))
+        if rc != NVML_SUCCESS:
+            continue
+        nvml_used_mb = int((mem.total - mem.free) // (1024 * 1024))
+        reserved = nvml_used_mb - smi_mem[i]
+        if reserved > 0:
+            offsets[i] = reserved
+
+    return offsets
 
 
 def _gpu_processes(
@@ -381,13 +429,17 @@ def _gpu_processes(
 # ---------------------------------------------------------------------------
 
 
-def probe(own_user: str | None = None) -> dict[str, Any]:
+def probe(
+    own_user: str | None = None,
+    reserved_offsets: dict[int, int] | None = None,
+) -> dict[str, Any]:
     """Collect GPU information via NVML and return as a dict.
 
     Args:
-        own_user: If set, processes from this user are returned in full
-                  detail (with cmdline); other users' processes are
-                  aggregated per user.
+        own_user: Highlight processes for this user.
+        reserved_offsets: Cached {gpu_index: reserved_mb} from prior
+            calibration. If None, NVML v2 is tried first, then
+            nvidia-smi is used for one-time calibration.
     """
     t_start = time.monotonic()
 
@@ -446,9 +498,23 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
         # Lazy cache for nvidia-smi process fallback.
         nvsmi_cache: list[dict[str, list[dict[str, Any]]] | None] = [None]
 
-        # Pre-fetch nvidia-smi memory values for user-visible used (excludes
-        # driver reserved ~440 MB that NVML lumps into total-free).
-        smi_memory = _run_nvsmi_memory()
+        # Memory offset calibration. Try NVML v2 first. If unavailable
+        # and no cached offsets, calibrate once via nvidia-smi.
+        if reserved_offsets is None:
+            # First poll: try v2, fall back to calibration
+            reserved_offsets = {}
+            if count.value > 0:
+                test_h = ctypes.c_void_p()
+                rc0 = lib.nvmlDeviceGetHandleByIndex(0, ctypes.byref(test_h))
+                if rc0 == NVML_SUCCESS:
+                    v2 = _try_nvml_v2_memory(lib, test_h)
+                    if v2 is None:
+                        reserved_offsets = _calibrate_reserved(lib, test_h, count)
+        need_calibration = len(reserved_offsets) == 0 and count.value > 0
+        if need_calibration:
+            # If we got here with empty offsets, nvidia-smi isn't available.
+            # Fall through to raw NVML values.
+            pass
 
         for i in range(count.value):
             gpu: dict[str, Any] = {"index": i}
@@ -476,18 +542,27 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
             except Exception:
                 gpu["uuid"] = "unknown"
 
-            # Memory — NVML for total/free, nvidia-smi for user-visible used
+            # Memory — try v2 first (fast, no subprocess), then cached offsets
             try:
                 mem = NvmlMemory()
                 lib.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(mem))
                 total_mb = int(mem.total // (1024 * 1024))
                 free_mb = int(mem.free // (1024 * 1024))
-                # NVML used = total - free (includes driver reserved ~440 MB).
-                # Prefer nvidia-smi's user-visible used when available.
-                used_mb = smi_memory.get(i, total_mb - free_mb)
+
+                # Try NVML v2 for user-visible used (= total - free - reserved)
+                v2 = _try_nvml_v2_memory(lib, handle)
+                if v2 is not None:
+                    used_mb, free_mb_adj = v2
+                    free_mb = free_mb_adj
+                elif i in reserved_offsets:
+                    used_mb = total_mb - free_mb - reserved_offsets[i]
+                else:
+                    # No calibration available — raw NVML value
+                    used_mb = total_mb - free_mb
+
                 gpu["memory_total_mb"] = total_mb
-                gpu["memory_used_mb"] = used_mb
-                gpu["memory_free_mb"] = total_mb - used_mb
+                gpu["memory_used_mb"] = max(used_mb, 0)
+                gpu["memory_free_mb"] = total_mb - max(used_mb, 0)
             except Exception:
                 gpu["memory_total_mb"] = 0
                 gpu["memory_used_mb"] = 0
@@ -544,7 +619,12 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
 
         elapsed = (time.monotonic() - t_start) * 1000
 
-        return {"ok": True, "gpus": gpus, "elapsed_ms": round(elapsed, 1)}
+        return {
+            "ok": True,
+            "gpus": gpus,
+            "elapsed_ms": round(elapsed, 1),
+            "reserved_offsets": reserved_offsets if reserved_offsets else {},
+        }
 
     finally:
         lib.nvmlShutdown()
@@ -560,9 +640,20 @@ def main() -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--own-user", default=None, help="Highlight processes for this user")
+    parser.add_argument("--reserved-offsets", default=None,
+                        help="JSON: {gpu_index: reserved_mb} from prior calibration")
     args = parser.parse_args()
 
-    result = probe(own_user=args.own_user)
+    offsets = None
+    if args.reserved_offsets:
+        try:
+            # Keys arrive as strings from JSON; convert to int
+            raw = json.loads(args.reserved_offsets)
+            offsets = {int(k): v for k, v in raw.items()}
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    result = probe(own_user=args.own_user, reserved_offsets=offsets)
     json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
     sys.stdout.write("\n")
     sys.stdout.flush()

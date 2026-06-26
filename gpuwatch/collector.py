@@ -39,6 +39,7 @@ class Collector:
         self._refresh = refresh_seconds
         self._timeout = timeout_seconds
         self._on_update: Callable[[str, ServerSnapshot], None] | None = None
+        self._reserved_offsets: dict[str, dict[int, int]] = {}  # per host
 
     @property
     def snapshots(self) -> dict[str, ServerSnapshot | None]:
@@ -93,12 +94,18 @@ class Collector:
 
         while True:
             try:
+                offsets = self._reserved_offsets.get(host) or None
                 json_str, latency_ms = await ssh_executor.run_probe(
-                    host, timeout=self._timeout, own_user=ssh_user
+                    host, timeout=self._timeout, own_user=ssh_user,
+                    reserved_offsets=offsets,
                 )
                 data = json.loads(json_str)
 
                 if data.get("ok"):
+                    # Cache reserved memory offsets for subsequent polls
+                    offsets = data.get("reserved_offsets")
+                    if offsets:
+                        self._reserved_offsets[host] = offsets
                     snapshot = ServerSnapshot.from_probe(host, label, data, latency_ms)
                     consecutive_failures = 0
                 else:
