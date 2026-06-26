@@ -295,8 +295,11 @@ def _gpu_processes(
     except Exception:
         pass
 
-    # Fallback to nvidia-smi data
-    if use_nvsmi and nvsmi_data:
+    # Fallback to nvidia-smi data. Fetch on demand if the pre-check
+    # on GPU 0 didn't catch a permission issue on another GPU.
+    if use_nvsmi:
+        if nvsmi_data is None:
+            nvsmi_data = _run_nvsmi_processes()
         for pi in nvsmi_data.get(gpu_uuid, []):
             # Resolve user from /proc for own/other classification
             uid = _read_proc_uid(pi["pid"])
