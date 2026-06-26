@@ -247,6 +247,33 @@ def _run_nvsmi_processes() -> dict[str, list[dict[str, Any]]]:
     return result
 
 
+def _run_nvsmi_memory() -> dict[int, int]:
+    """Get per-GPU user-visible memory usage from nvidia-smi.
+
+    NVML's nvmlMemory_t.used = total - free (includes driver reserved
+    framebuffer, typically 400-450 MB). nvidia-smi reports used and
+    reserved separately. We fetch the user-visible value here.
+    """
+    import subprocess
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index,memory.used",
+             "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL, timeout=3,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+    result: dict[int, int] = {}
+    for line in output.decode("utf-8", errors="replace").strip().split("\n"):
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2:
+            try:
+                result[int(parts[0])] = int(parts[1])
+            except ValueError:
+                pass
+    return result
+
+
 def _gpu_processes(
     lib,
     handle,
@@ -416,10 +443,12 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
         gpus: list[dict[str, Any]] = []
         handle = ctypes.c_void_p()
 
-        # Lazy cache for nvidia-smi fallback. Wrapped in a list so
-        # _gpu_processes can populate it on first NO_PERMISSION and
-        # subsequent GPUs reuse it without re-fetching.
+        # Lazy cache for nvidia-smi process fallback.
         nvsmi_cache: list[dict[str, list[dict[str, Any]]] | None] = [None]
+
+        # Pre-fetch nvidia-smi memory values for user-visible used (excludes
+        # driver reserved ~440 MB that NVML lumps into total-free).
+        smi_memory = _run_nvsmi_memory()
 
         for i in range(count.value):
             gpu: dict[str, Any] = {"index": i}
@@ -447,13 +476,18 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
             except Exception:
                 gpu["uuid"] = "unknown"
 
-            # Memory
+            # Memory — NVML for total/free, nvidia-smi for user-visible used
             try:
                 mem = NvmlMemory()
                 lib.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(mem))
-                gpu["memory_total_mb"] = int(mem.total // (1024 * 1024))
-                gpu["memory_used_mb"] = int(mem.used // (1024 * 1024))
-                gpu["memory_free_mb"] = int(mem.free // (1024 * 1024))
+                total_mb = int(mem.total // (1024 * 1024))
+                free_mb = int(mem.free // (1024 * 1024))
+                # NVML used = total - free (includes driver reserved ~440 MB).
+                # Prefer nvidia-smi's user-visible used when available.
+                used_mb = smi_memory.get(i, total_mb - free_mb)
+                gpu["memory_total_mb"] = total_mb
+                gpu["memory_used_mb"] = used_mb
+                gpu["memory_free_mb"] = total_mb - used_mb
             except Exception:
                 gpu["memory_total_mb"] = 0
                 gpu["memory_used_mb"] = 0
