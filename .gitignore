@@ -6,3 +6,4 @@ __pycache__/
 dist/
 uv.lock
 .claude/
+.DS_Store
