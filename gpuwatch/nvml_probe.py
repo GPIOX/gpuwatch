@@ -259,15 +259,16 @@ def _try_nvml_v2_memory(lib, handle) -> tuple[int, int] | None:
             ("version", ctypes.c_uint),
             ("_pad", ctypes.c_uint),
             ("total", ctypes.c_ulonglong),
+            ("reserved", ctypes.c_ulonglong),  # must precede free/used per NVML ABI
             ("free", ctypes.c_ulonglong),
             ("used", ctypes.c_ulonglong),
-            ("reserved", ctypes.c_ulonglong),
         ]
 
     func.argtypes = [ctypes.c_void_p, ctypes.POINTER(NvmlMemoryV2)]
     func.restype = ctypes.c_int
     m = NvmlMemoryV2()
-    m.version = 2
+    # NVML versioned structs: version = sizeof(struct) | (major << 24)
+    m.version = ctypes.sizeof(NvmlMemoryV2) | (2 << 24)
     rc = func(handle, ctypes.byref(m))
     if rc == NVML_SUCCESS:
         total_mb = int(m.total // (1024 * 1024))
@@ -501,20 +502,23 @@ def probe(
         # Memory offset calibration. Try NVML v2 first. If unavailable
         # and no cached offsets, calibrate once via nvidia-smi.
         if reserved_offsets is None:
-            # First poll: try v2, fall back to calibration
-            reserved_offsets = {}
+            # First poll: try v2, fall back to one-time calibration
             if count.value > 0:
                 test_h = ctypes.c_void_p()
                 rc0 = lib.nvmlDeviceGetHandleByIndex(0, ctypes.byref(test_h))
                 if rc0 == NVML_SUCCESS:
                     v2 = _try_nvml_v2_memory(lib, test_h)
-                    if v2 is None:
+                    if v2 is not None:
+                        reserved_offsets = {}  # v2 available, no offsets needed
+                    else:
                         reserved_offsets = _calibrate_reserved(lib, test_h, count)
-        need_calibration = len(reserved_offsets) == 0 and count.value > 0
-        if need_calibration:
-            # If we got here with empty offsets, nvidia-smi isn't available.
-            # Fall through to raw NVML values.
-            pass
+                else:
+                    reserved_offsets = {}
+            else:
+                reserved_offsets = {}
+        # Cached empty dict means "already tried, fall back to raw NVML".
+        # Distinguish from "not yet calibrated" by the fact that it's never
+        # None on subsequent polls (collector always sends the cached value).
 
         for i in range(count.value):
             gpu: dict[str, Any] = {"index": i}
