@@ -7,6 +7,7 @@ and allows a local YAML file to override labels / ordering.
 
 from __future__ import annotations
 
+import getpass
 import logging
 import os
 from typing import Any
@@ -131,7 +132,7 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
                     host=host,
                     label=label,
                     enabled=entry.get("enabled", False),
-                    ssh_user=ssh_info.get("user"),
+                    ssh_user=ssh_info.get("user") or getpass.getuser(),
                 )
             )
         return result
@@ -147,7 +148,7 @@ def discover_servers(yaml_path: str | None = None) -> list[ServerConfig]:
             host=h["host"],
             label=h["host"],
             enabled=False,
-            ssh_user=h.get("user"),
+            ssh_user=h.get("user") or getpass.getuser(),
         )
         for h in servers
     ]

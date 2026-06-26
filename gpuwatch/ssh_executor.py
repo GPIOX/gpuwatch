@@ -64,7 +64,7 @@ async def run_probe(
     # Build remote command — force UTF-8 on the remote side to avoid
     # GBK/cp1252 decode errors on Windows when reading the probe via stdin.
     import shlex
-    remote_cmd = ["PYTHONIOENCODING=utf-8", "python3", "-"]
+    remote_cmd = ["env", "PYTHONIOENCODING=utf-8", "python3", "-"]
     if own_user:
         remote_cmd.extend(["--own-user", shlex.quote(own_user)])
 

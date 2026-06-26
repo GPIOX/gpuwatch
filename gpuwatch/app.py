@@ -134,6 +134,8 @@ class GPUWatchApp(App):
             await self._collector.stop(event.host)
             if self._dashboard:
                 self._dashboard.remove_panel(event.host)
+            if self._selector:
+                self._selector.update_status(event.host, "")
 
     # ── actions ───────────────────────────────────────────────────────
 

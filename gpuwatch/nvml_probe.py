@@ -252,12 +252,12 @@ def _gpu_processes(
     handle,
     gpu_uuid: str,
     own_user: str | None,
-    nvsmi_data: dict[str, list[dict[str, Any]]],
+    nvsmi_cache: list[dict[str, list[dict[str, Any]]] | None],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Collect processes for one GPU.
 
-    Tries NVML first. Falls back to pre-fetched nvidia-smi data if
-    NVML returns NVML_ERROR_NO_PERMISSION.
+    Tries NVML first. Falls back to nvidia-smi (lazily fetched once
+    and cached via nvsmi_cache) if NVML returns NO_PERMISSION.
     """
     raw_procs: list[dict[str, Any]] = []
     use_nvsmi = False
@@ -295,10 +295,12 @@ def _gpu_processes(
     except Exception:
         pass
 
-    # Fallback to nvidia-smi data. Always fetched once at probe start,
-    # so nvsmi_data is never None by the time we get here.
+    # Fallback to nvidia-smi data, fetched lazily on first NO_PERMISSION
+    # and cached for subsequent GPUs in this probe cycle.
     if use_nvsmi:
-        for pi in nvsmi_data.get(gpu_uuid, []):
+        if nvsmi_cache[0] is None:
+            nvsmi_cache[0] = _run_nvsmi_processes()
+        for pi in nvsmi_cache[0].get(gpu_uuid, []):
             # Resolve user from /proc for own/other classification
             uid = _read_proc_uid(pi["pid"])
             username = _uid_to_name(uid) if uid is not None else None
@@ -414,10 +416,10 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
         gpus: list[dict[str, Any]] = []
         handle = ctypes.c_void_p()
 
-        # Always pre-fetch nvidia-smi process data as fallback.
-        # NVML process queries may fail with NO_PERMISSION on any GPU,
-        # not just GPU 0. One nvidia-smi call covers all GPUs at once.
-        nvsmi_data = _run_nvsmi_processes() if count.value > 0 else {}
+        # Lazy cache for nvidia-smi fallback. Wrapped in a list so
+        # _gpu_processes can populate it on first NO_PERMISSION and
+        # subsequent GPUs reuse it without re-fetching.
+        nvsmi_cache: list[dict[str, list[dict[str, Any]]] | None] = [None]
 
         for i in range(count.value):
             gpu: dict[str, Any] = {"index": i}
@@ -500,7 +502,7 @@ def probe(own_user: str | None = None) -> dict[str, Any]:
                 lib, handle,
                 gpu_uuid=gpu.get("uuid", ""),
                 own_user=own_user,
-                nvsmi_data=nvsmi_data,
+                nvsmi_cache=nvsmi_cache,
             )
             gpu["processes"] = processes
             gpu["other_users"] = other_users

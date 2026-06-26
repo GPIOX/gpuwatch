@@ -26,12 +26,6 @@ def _truncate(text: str, max_len: int = 70) -> str:
     return text[: max_len - 1] + "…"
 
 
-def _short_gpu_name(name: str) -> str:
-    """Strip redundant branding: 'NVIDIA GeForce RTX 3090 Ti' → 'RTX 3090 Ti'."""
-    for prefix in ("NVIDIA GeForce ", "NVIDIA ", "GeForce "):
-        if name.startswith(prefix):
-            return name[len(prefix):]
-    return name
 
 
 class ServerPanel(Static):
